@@ -42,7 +42,7 @@ esac
 printf 'Transcribing (%s)...\n' "$lang" >&2
 start=$SECONDS
 
-whisper-cli -m "$model" -l "$lang" -np -otxt -of "$prefix" "$wav" >/dev/null
+whisper-cli -m "$model" -l "$lang" -pp -otxt -of "$prefix" "$wav"
 
 elapsed=$((SECONDS - start))
 printf 'Saved → %s  (%dm%02ds)\n' "$actual_output" $((elapsed / 60)) $((elapsed % 60)) >&2
