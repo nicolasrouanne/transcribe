@@ -17,9 +17,11 @@ default_out="$(basename "${input%.*}").txt"
 output="${3:-$default_out}"
 
 model="/opt/homebrew/share/whisper-cpp/ggml-medium.bin"
+vad_model="$HOME/.local/share/whisper-cpp/ggml-silero-v5.1.2.bin"
 
 [ -f "$input" ] || { echo "File not found: $input" >&2; exit 1; }
 [ -f "$model" ] || { echo "Model not found: $model" >&2; exit 1; }
+[ -f "$vad_model" ] || { echo "VAD model not found: $vad_model" >&2; exit 1; }
 
 mkdir -p "$(dirname "$output")"
 prefix="${output%.txt}"
@@ -42,7 +44,10 @@ esac
 printf 'Transcribing (%s)...\n' "$lang" >&2
 start=$SECONDS
 
-whisper-cli -m "$model" -l "$lang" -pp -mc 0 -sns -otxt -of "$prefix" "$wav"
+whisper-cli -m "$model" -l "$lang" \
+  --vad --vad-model "$vad_model" \
+  -pp -mc 0 -sns \
+  -otxt -of "$prefix" "$wav"
 
 elapsed=$((SECONDS - start))
 printf 'Saved → %s  (%dm%02ds)\n' "$actual_output" $((elapsed / 60)) $((elapsed % 60)) >&2
