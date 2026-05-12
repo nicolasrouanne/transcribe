@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# transcribe — local whisper.cpp transcription
+# Usage: transcribe <audio-file> [lang] [output]
+#   lang   defaults to 'fr'. Use 'auto' to autodetect.
+#   output defaults to ./<basename>.txt (current working directory).
+
+set -euo pipefail
+
+[ $# -lt 1 ] && {
+  echo "Usage: $(basename "$0") <audio-file> [lang] [output]" >&2
+  exit 1
+}
+
+input="${1/#\~/$HOME}"
+lang="${2:-fr}"
+default_out="$(basename "${input%.*}").txt"
+output="${3:-$default_out}"
+
+model="/opt/homebrew/share/whisper-cpp/ggml-medium.bin"
+
+[ -f "$input" ] || { echo "File not found: $input" >&2; exit 1; }
+[ -f "$model" ] || { echo "Model not found: $model" >&2; exit 1; }
+
+mkdir -p "$(dirname "$output")"
+prefix="${output%.txt}"
+actual_output="${prefix}.txt"
+
+tmp=""
+trap '[ -n "$tmp" ] && rm -f "$tmp"' EXIT
+
+ext=$(printf '%s' "${input##*.}" | tr '[:upper:]' '[:lower:]')
+case "$ext" in
+  wav) wav="$input" ;;
+  *)
+    tmp="$(mktemp -t whisper.XXXXXX).wav"
+    printf 'Converting → 16kHz mono WAV...\n' >&2
+    ffmpeg -loglevel error -y -i "$input" -ar 16000 -ac 1 "$tmp"
+    wav="$tmp"
+    ;;
+esac
+
+printf 'Transcribing (%s)...\n' "$lang" >&2
+start=$SECONDS
+
+whisper-cli -m "$model" -l "$lang" -np -otxt -of "$prefix" "$wav" >/dev/null
+
+elapsed=$((SECONDS - start))
+printf 'Saved → %s  (%dm%02ds)\n' "$actual_output" $((elapsed / 60)) $((elapsed % 60)) >&2
