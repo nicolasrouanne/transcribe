@@ -1,60 +1,39 @@
 #!/usr/bin/env bash
-# transcribe — local WhisperX transcription with optional diarisation.
+# transcribe — local WhisperX with stage-level caching.
 # Usage: transcribe <audio-file> [lang] [output-dir]
 #   lang       defaults to 'fr'. Use 'auto' to autodetect.
 #   output-dir defaults to current directory.
 #
-# To enable speaker diarisation:
-#   1. Create a Hugging Face account + read-access token.
-#   2. Accept the model terms (one click each):
-#        https://huggingface.co/pyannote/speaker-diarization-3.1
-#        https://huggingface.co/pyannote/segmentation-3.0
-#   3. Save the token: mkdir -p ~/.config/whisperx && \
-#                      echo <TOKEN> > ~/.config/whisperx/token
+# Stages (transcribe / align / diarise) are cached to
+#   <output-dir>/.transcribe-cache/<fingerprint>/
+# so an interrupted run resumes from the last completed stage.
+#
+# Diarisation requires ~/.config/whisperx/token (HF read token + accepted
+# terms on pyannote/speaker-diarization-community-1). Run with --no-diarize
+# to skip.
 
 set -euo pipefail
 
 [ $# -lt 1 ] && {
-  echo "Usage: $(basename "$0") <audio-file> [lang] [output-dir]" >&2
+  echo "Usage: $(basename "$0") <audio-file> [lang] [output-dir] [--no-diarize]" >&2
   exit 1
 }
 
-input="${1/#\~/$HOME}"
-lang="${2:-fr}"
-output_dir="${3:-.}"
+script_dir="$(cd "$(dirname "$0")" && pwd)"
+whisperx_python="$(uv tool dir 2>/dev/null)/whisperx/bin/python"
 
-[ -f "$input" ] || { echo "File not found: $input" >&2; exit 1; }
+[ -x "$whisperx_python" ] || {
+  echo "WhisperX python not found at $whisperx_python" >&2
+  echo "Install with: uv tool install whisperx" >&2
+  exit 1
+}
 
-mkdir -p "$output_dir"
+input="$1"; shift
+lang="${1:-fr}"; [ $# -gt 0 ] && shift || true
+output_dir="${1:-.}"; [ $# -gt 0 ] && shift || true
 
-# Load HF token from env or ~/.config/whisperx/token
-if [ -z "${HF_TOKEN:-}" ] && [ -f "$HOME/.config/whisperx/token" ]; then
-  HF_TOKEN="$(tr -d '[:space:]' < "$HOME/.config/whisperx/token")"
-fi
-
-args=(
-  --model large-v3
-  --device cpu
-  --compute_type int8
-  --vad_method silero
-  --output_format all
-  --output_dir "$output_dir"
-  --print_progress True
-)
-
-[ "$lang" != "auto" ] && args+=(--language "$lang")
-
-if [ -n "${HF_TOKEN:-}" ]; then
-  args+=(--diarize --hf_token "$HF_TOKEN" --min_speakers 2 --max_speakers 2)
-  printf 'Diarisation enabled (assuming 2 speakers).\n' >&2
-else
-  printf 'Diarisation disabled (no HF_TOKEN). See script header to enable.\n' >&2
-fi
-
-printf 'Transcribing %s (%s, large-v3)...\n' "$(basename "$input")" "$lang" >&2
-start=$SECONDS
-
-whisperx "${args[@]}" "$input"
-
-elapsed=$((SECONDS - start))
-printf 'Done in %dm%02ds → %s/\n' $((elapsed / 60)) $((elapsed % 60)) "$output_dir" >&2
+exec "$whisperx_python" "$script_dir/transcribe.py" \
+  --lang "$lang" \
+  --output-dir "$output_dir" \
+  "$@" \
+  "$input"
