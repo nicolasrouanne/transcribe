@@ -16,7 +16,14 @@ set -euo pipefail
   exit 1
 }
 
-script_dir="$(cd "$(dirname "$0")" && pwd)"
+# Resolve symlinks so script_dir points to the real install location.
+source="${BASH_SOURCE[0]}"
+while [ -L "$source" ]; do
+  link_dir="$(cd -P "$(dirname "$source")" && pwd)"
+  source="$(readlink "$source")"
+  [[ $source != /* ]] && source="$link_dir/$source"
+done
+script_dir="$(cd -P "$(dirname "$source")" && pwd)"
 whisperx_python="$(uv tool dir 2>/dev/null)/whisperx/bin/python"
 
 [ -x "$whisperx_python" ] || {
