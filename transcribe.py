@@ -111,9 +111,12 @@ def main() -> int:
     }
     if meta_path.exists():
         prev = json.loads(meta_path.read_text())
-        if prev.get("fingerprint") != fp:
+        prev_fp = prev.get("fingerprint")
+        # Treat missing fingerprint (legacy / migrated cache) as "unknown,
+        # trust it" — only abort on an explicit mismatch.
+        if prev_fp is not None and prev_fp != fp:
             print(
-                f"⚠ Cache fingerprint mismatch ({prev.get('fingerprint')} vs {fp}).",
+                f"⚠ Cache fingerprint mismatch ({prev_fp} vs {fp}).",
                 file=sys.stderr,
             )
             print(
