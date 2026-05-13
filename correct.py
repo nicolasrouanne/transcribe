@@ -24,31 +24,32 @@ from pathlib import Path
 
 import requests
 
-OLLAMA_URL = "http://localhost:11434/api/generate"
+OLLAMA_URL = "http://localhost:11434/api/chat"
 MAX_BASENAME_LEN = 60
+PROMPT_VERSION = "v2"  # bump to invalidate cached chunks when the prompt changes
 
-PROMPT = """Tu es un éditeur de transcription. Voici une portion de transcription \
-automatique d'un dialogue en français.
+SYSTEM_PROMPT = """Tu es un éditeur de transcription automatique français.
 
-RÈGLES STRICTES — applique-les fidèlement :
-1. Corrige UNIQUEMENT les erreurs probables de speech-to-text :
-   - mots qui n'existent pas en français (mauvaise reconnaissance)
-   - noms propres mal orthographiés (lieux, personnes)
-   - ponctuation manquante évidente
-2. NE change PAS le sens d'une phrase, même si elle semble bizarre.
-3. NE PARAPHRASE PAS. NE RÉSUME PAS. NE REFORMULE PAS.
-4. CONSERVE les hésitations, répétitions, "euh", coupures, phrases \
-inachevées — c'est du français parlé.
-5. CONSERVE EXACTEMENT le préfixe [N] (numéro) et le label [SPEAKER_XX] \
-au début de chaque ligne.
-6. Une ligne d'entrée = une ligne de sortie. Même nombre de lignes.
-7. Si tu ne sais pas comment améliorer une ligne, recopie-la TELLE QUELLE.
+Tu reçois des lignes au format strict: [N] [SPEAKER_XX] texte
+Pour chaque ligne d'entrée, tu produis EXACTEMENT UNE ligne de sortie au même format.
 
-Entrée :
-{input}
+Tu corriges UNIQUEMENT:
+- mots inexistants en français (mauvaise reconnaissance speech-to-text)
+- noms propres mal orthographiés (lieux, personnes)
+- ponctuation manquante évidente
 
-Sortie (même numérotation, mêmes labels) :
-"""
+Tu NE changes PAS le sens. Tu NE paraphrases PAS. Tu NE résumes PAS. Tu NE \
+reformules PAS. Tu conserves les hésitations, répétitions, "euh", coupures, \
+phrases inachevées (c'est du français parlé). Si tu ne sais pas comment \
+améliorer une ligne, recopie-la telle quelle.
+
+INTERDICTIONS ABSOLUES:
+- AUCUNE explication, excuse, préambule, ou commentaire sur la tâche.
+- AUCUN texte hors des lignes [N] [SPEAKER_XX] texte.
+- Ta réponse commence par "[" (le premier caractère de "[1] [SPEAKER...").
+- Ta réponse contient le MÊME nombre de lignes que l'entrée.
+
+Tu agis. Tu n'expliques pas."""
 
 LINE_RE = re.compile(r"^\[(\d+)\]\s+\[([^\]]+)\]\s+(.*)$")
 
@@ -67,19 +68,22 @@ def short_hash(s: str) -> str:
     return hashlib.sha256(s.encode()).hexdigest()[:16]
 
 
-def call_ollama(model: str, prompt: str, timeout: int = 600) -> str:
+def call_ollama(model: str, system: str, user: str, timeout: int = 600) -> str:
     r = requests.post(
         OLLAMA_URL,
         json={
             "model": model,
-            "prompt": prompt,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
             "stream": False,
             "options": {"temperature": 0.1, "num_predict": 8192},
         },
         timeout=timeout,
     )
     r.raise_for_status()
-    return r.json()["response"]
+    return r.json()["message"]["content"]
 
 
 def segments_from_json(path: Path) -> list[tuple[str, str]]:
@@ -162,7 +166,9 @@ def main() -> int:
     content_hash = short_hash(original_numbered)
 
     model_safe = args.model.replace(":", "-").replace("/", "-")
-    cache_dir = cache_root / safe_name / "correct" / model_safe / content_hash
+    cache_dir = (
+        cache_root / safe_name / "correct" / model_safe / PROMPT_VERSION / content_hash
+    )
     cache_dir.mkdir(parents=True, exist_ok=True)
     print(f"Out:   {out_dir}", file=sys.stderr)
     print(f"Cache: {cache_dir}", file=sys.stderr)
@@ -188,7 +194,7 @@ def main() -> int:
                 file=sys.stderr,
             )
             t0 = time.time()
-            chunk_out = call_ollama(args.model, PROMPT.format(input=chunk_in))
+            chunk_out = call_ollama(args.model, SYSTEM_PROMPT, chunk_in)
             chunk_path.write_text(chunk_out)
             print(f"  done in {time.time() - t0:.0f}s", file=sys.stderr)
 
