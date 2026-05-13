@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Correct a WhisperX transcript via a local LLM (Ollama).
 
-Reads the canonical <basename>.json produced by transcribe.py, processes it
-in chunks through a local LLM, and writes:
-  - <basename>.corrected.txt  (cleaned-up transcript)
-  - <basename>.diff           (unified diff vs the original)
+Reads the canonical <safe>.json produced by transcribe.py, processes it in
+chunks through a local LLM, and writes:
+  out/<safe>.corrected.txt  (cleaned-up transcript)
+  out/<safe>.diff           (unified diff vs the original)
 
-Each chunk's response is cached, so re-running skips work already done.
+Each chunk's response is cached under
+  cache/<safe>/correct/<model>/<content-hash>/chunk-NNN.txt
+so re-running skips work already done.
 """
 from __future__ import annotations
 
@@ -17,11 +19,13 @@ import json
 import re
 import sys
 import time
+import unicodedata
 from pathlib import Path
 
 import requests
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
+MAX_BASENAME_LEN = 60
 
 PROMPT = """Tu es un éditeur de transcription. Voici une portion de transcription \
 automatique d'un dialogue en français.
@@ -47,6 +51,16 @@ Sortie (même numérotation, mêmes labels) :
 """
 
 LINE_RE = re.compile(r"^\[(\d+)\]\s+\[([^\]]+)\]\s+(.*)$")
+
+
+def safe_dirname(name: str, max_len: int = MAX_BASENAME_LEN) -> str:
+    nfkd = unicodedata.normalize("NFKD", name)
+    ascii_only = "".join(c for c in nfkd if not unicodedata.combining(c))
+    safe = re.sub(r"[^a-z0-9]+", "-", ascii_only.lower())
+    safe = re.sub(r"-+", "-", safe).strip("-")
+    if len(safe) > max_len:
+        safe = safe[:max_len].rstrip("-")
+    return safe or "unnamed"
 
 
 def short_hash(s: str) -> str:
@@ -100,12 +114,26 @@ def ollama_alive() -> bool:
         return False
 
 
+def resolve_layout(json_path: Path) -> tuple[Path, Path, str]:
+    """Return (out_dir, cache_root, safe_name) following the project layout.
+
+    Expected: <root>/out/<safe>.json → out_dir = <root>/out, cache_root = <root>/cache.
+    Otherwise: fall back to writing alongside the JSON.
+    """
+    safe_name = safe_dirname(json_path.stem)
+    parent = json_path.parent
+    if parent.name == "out" and (parent.parent / "cache").exists():
+        return parent, parent.parent / "cache", safe_name
+    return parent, parent / "cache", safe_name
+
+
 def main() -> int:
     p = argparse.ArgumentParser()
-    p.add_argument("json_file", help="<basename>.json from transcribe.py")
+    p.add_argument("json_file", help="<safe>.json from transcribe.py")
     p.add_argument("--model", default="mistral-nemo:12b")
     p.add_argument("--chunk-size", type=int, default=40, help="segments per chunk")
-    p.add_argument("--output-dir", default=None)
+    p.add_argument("--out-dir", default=None, help="override output directory")
+    p.add_argument("--cache-root", default=None, help="override cache root directory")
     args = p.parse_args()
 
     if not ollama_alive():
@@ -115,13 +143,12 @@ def main() -> int:
     if not json_path.is_file():
         sys.exit(f"File not found: {json_path}")
 
-    output_dir = (
-        Path(args.output_dir).expanduser().resolve()
-        if args.output_dir
-        else json_path.parent
-    )
-    output_dir.mkdir(parents=True, exist_ok=True)
-    basename = json_path.stem
+    out_dir, cache_root, safe_name = resolve_layout(json_path)
+    if args.out_dir:
+        out_dir = Path(args.out_dir).expanduser().resolve()
+    if args.cache_root:
+        cache_root = Path(args.cache_root).expanduser().resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     segments = segments_from_json(json_path)
     if not segments:
@@ -132,14 +159,12 @@ def main() -> int:
         (i + 1, spk, txt) for i, (spk, txt) in enumerate(segments)
     ]
     original_numbered = "\n".join(f"[{i}] [{spk}] {txt}" for i, spk, txt in indexed)
+    content_hash = short_hash(original_numbered)
 
-    cache_dir = (
-        json_path.parent
-        / ".correct-cache"
-        / short_hash(original_numbered)
-        / args.model.replace(":", "-")
-    )
+    model_safe = args.model.replace(":", "-").replace("/", "-")
+    cache_dir = cache_root / safe_name / "correct" / model_safe / content_hash
     cache_dir.mkdir(parents=True, exist_ok=True)
+    print(f"Out:   {out_dir}", file=sys.stderr)
     print(f"Cache: {cache_dir}", file=sys.stderr)
 
     chunks = [
@@ -179,14 +204,14 @@ def main() -> int:
         clean_line(corrected[i][0], corrected[i][1]) for i, _, _ in indexed
     )
 
-    out_path = output_dir / f"{basename}.corrected.txt"
-    diff_path = output_dir / f"{basename}.diff"
+    out_path = out_dir / f"{safe_name}.corrected.txt"
+    diff_path = out_dir / f"{safe_name}.diff"
     out_path.write_text(corrected_clean + "\n")
     diff = difflib.unified_diff(
         original_clean.splitlines(),
         corrected_clean.splitlines(),
-        fromfile=f"{basename}.txt (original)",
-        tofile=f"{basename}.corrected.txt",
+        fromfile=f"{safe_name}.txt (original)",
+        tofile=f"{safe_name}.corrected.txt",
         lineterm="",
         n=2,
     )
@@ -201,7 +226,10 @@ def main() -> int:
         if (s0, t0) != (s1, t1)
     )
     print(f"Done → {out_path}", file=sys.stderr)
-    print(f"Diff → {diff_path}  ({changed}/{len(indexed)} lines changed)", file=sys.stderr)
+    print(
+        f"Diff → {diff_path}  ({changed}/{len(indexed)} lines changed)",
+        file=sys.stderr,
+    )
     return 0
 
 

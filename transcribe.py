@@ -4,6 +4,10 @@
 Each stage (transcribe / align / diarise) is cached to disk so an interrupted
 run can be resumed without redoing finished work. The HF token is read from
 ~/.config/whisperx/token and passed via the Python API (never via argv).
+
+Layout under <output-dir>:
+  out/<safe>.{txt,srt,vtt,json,tsv}
+  cache/<safe>/{meta,transcribe,align,diarize}.json
 """
 from __future__ import annotations
 
@@ -11,8 +15,10 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import sys
 import time
+import unicodedata
 from pathlib import Path
 
 import pandas as pd
@@ -20,9 +26,23 @@ import whisperx
 from whisperx.diarize import DiarizationPipeline, assign_word_speakers
 from whisperx.utils import get_writer
 
+MAX_BASENAME_LEN = 60
+
+
+def safe_dirname(name: str, max_len: int = MAX_BASENAME_LEN) -> str:
+    """Sanitize a filename stem into a shell-safe, ASCII-only, truncated form."""
+    nfkd = unicodedata.normalize("NFKD", name)
+    ascii_only = "".join(c for c in nfkd if not unicodedata.combining(c))
+    lowered = ascii_only.lower()
+    safe = re.sub(r"[^a-z0-9]+", "-", lowered)
+    safe = re.sub(r"-+", "-", safe).strip("-")
+    if len(safe) > max_len:
+        safe = safe[:max_len].rstrip("-")
+    return safe or "unnamed"
+
 
 def fingerprint(path: Path) -> str:
-    """Stable cache key from file identity (path + size + mtime)."""
+    """Stable identity hash from file (path + size + mtime)."""
     stat = path.stat()
     h = hashlib.sha256()
     h.update(str(path.resolve()).encode())
@@ -72,26 +92,43 @@ def main() -> int:
         sys.exit(f"File not found: {audio_path}")
 
     output_dir = Path(args.output_dir).expanduser().resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
+    safe_name = safe_dirname(audio_path.stem)
 
-    cache_dir = output_dir / ".transcribe-cache" / fingerprint(audio_path)
+    out_dir = output_dir / "out"
+    cache_dir = output_dir / "cache" / safe_name
+    out_dir.mkdir(parents=True, exist_ok=True)
     cache_dir.mkdir(parents=True, exist_ok=True)
-    (cache_dir / "meta.json").write_text(
-        json.dumps(
-            {
-                "audio": str(audio_path),
-                "model": args.model,
-                "lang": args.lang,
-                "diarize_model": args.diarize_model if not args.no_diarize else None,
-            },
-            indent=2,
-        )
-    )
+
+    fp = fingerprint(audio_path)
+    meta_path = cache_dir / "meta.json"
+    new_meta = {
+        "audio": str(audio_path),
+        "fingerprint": fp,
+        "safe_name": safe_name,
+        "model": args.model,
+        "lang": args.lang,
+        "diarize_model": args.diarize_model if not args.no_diarize else None,
+    }
+    if meta_path.exists():
+        prev = json.loads(meta_path.read_text())
+        if prev.get("fingerprint") != fp:
+            print(
+                f"⚠ Cache fingerprint mismatch ({prev.get('fingerprint')} vs {fp}).",
+                file=sys.stderr,
+            )
+            print(
+                f"  The audio at this basename changed. Clear with: rm -rf {cache_dir}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+    meta_path.write_text(json.dumps(new_meta, indent=2))
 
     device = "cpu"
     compute_type = "int8"
 
     print(f"Audio: {audio_path.name}", file=sys.stderr)
+    print(f"Safe: {safe_name}", file=sys.stderr)
+    print(f"Out:   {out_dir}", file=sys.stderr)
     print(f"Cache: {cache_dir}", file=sys.stderr)
     audio = whisperx.load_audio(str(audio_path))
 
@@ -106,14 +143,14 @@ def main() -> int:
             language=lang,
             vad_method="silero",
         )
-        result = model.transcribe(audio, language=lang, print_progress=True)
-        (cache_dir / "transcribe.json").write_text(json.dumps(result))
-        return result
+        res = model.transcribe(audio, language=lang, print_progress=True)
+        (cache_dir / "transcribe.json").write_text(json.dumps(res))
+        return res
 
     result = stage(
         "transcribe",
         cache_dir / "transcribe.json",
-        lambda p: json.loads(p.read_text()),
+        lambda path: json.loads(path.read_text()),
         do_transcribe,
     )
     detected_lang = result.get("language", args.lang)
@@ -137,7 +174,7 @@ def main() -> int:
     result = stage(
         "align",
         cache_dir / "align.json",
-        lambda p: json.loads(p.read_text()),
+        lambda path: json.loads(path.read_text()),
         do_align,
     )
     # whisperx.align drops the top-level language key; the writer needs it.
@@ -170,25 +207,27 @@ def main() -> int:
             diarize_segs = stage(
                 "diarize",
                 cache_dir / "diarize.json",
-                lambda p: pd.read_json(p, orient="records"),
+                lambda path: pd.read_json(path, orient="records"),
                 do_diarize,
             )
             result = assign_word_speakers(diarize_segs, result)
 
-    # Stage 4: write outputs
+    # Stage 4: write outputs (filenames driven by safe_name)
     print("→ writing outputs...", file=sys.stderr)
     writer_opts = {
         "highlight_words": False,
         "max_line_count": None,
         "max_line_width": None,
     }
+    # The writer uses the stem of this path for output filenames; the file
+    # itself never gets opened, so a synthetic path with the safe stem works.
+    synthetic_audio_path = audio_path.with_name(safe_name + audio_path.suffix)
     for fmt in ("txt", "srt", "vtt", "json", "tsv"):
-        writer = get_writer(fmt, str(output_dir))
-        writer(result, str(audio_path), writer_opts)
+        writer = get_writer(fmt, str(out_dir))
+        writer(result, str(synthetic_audio_path), writer_opts)
 
-    basename = audio_path.stem
     print(
-        f"Done → {output_dir}/{basename}.{{txt,srt,vtt,json,tsv}}",
+        f"Done → {out_dir}/{safe_name}.{{txt,srt,vtt,json,tsv}}",
         file=sys.stderr,
     )
     print(f"Cache kept at {cache_dir}", file=sys.stderr)

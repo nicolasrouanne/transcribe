@@ -77,17 +77,31 @@ Exemples :
 ./transcribe ~/Downloads/seance.m4a fr ~/transcripts/
 ```
 
-Outputs dans `output-dir` :
-- `seance.txt` — texte plat avec speaker labels
-- `seance.srt` — sous-titres avec timestamps
-- `seance.vtt` — sous-titres web
-- `seance.json` — source canonique (segments + mots + speakers)
-- `seance.tsv` — table
+Le basename de l'audio est **sanitisé** (ASCII, minuscules, tirets) et tronqué
+à 60 caractères. Par exemple `Psychologue - Corps et pas de côté .m4a` →
+`psychologue-corps-et-pas-de-cote`.
 
-Stages cachés dans `<output-dir>/.transcribe-cache/<fingerprint>/` :
-- `transcribe.json` — transcription brute
-- `align.json` — segments avec timestamps mot-à-mot
-- `diarize.json` — segments speaker (start/end/speaker)
+Structure créée sous `output-dir` :
+
+```
+<output-dir>/
+├── out/
+│   ├── <safe>.txt        # texte plat avec speaker labels
+│   ├── <safe>.srt        # sous-titres avec timestamps
+│   ├── <safe>.vtt        # sous-titres web
+│   ├── <safe>.json       # source canonique (segments + mots + speakers)
+│   └── <safe>.tsv        # table
+└── cache/
+    └── <safe>/
+        ├── meta.json     # fingerprint + params (détection stale)
+        ├── transcribe.json
+        ├── align.json
+        └── diarize.json
+```
+
+Le `meta.json` contient le fingerprint (path + size + mtime) de l'audio
+source. Si tu re-runs avec un audio modifié au même nom, le mismatch est
+détecté et le script abort. Pour repartir de zéro : `rm -rf cache/<safe>/`.
 
 ### Correction LLM
 
@@ -101,22 +115,40 @@ Exemples :
 ./correct ~/Downloads/seance.json qwen2.5:14b
 ```
 
-Outputs à côté du JSON :
-- `seance.corrected.txt` — transcript nettoyé
-- `seance.diff` — diff unifié vs original (pour reviewer les changements)
+Si le JSON est dans `out/`, les outputs sont écrits à côté et le cache à la
+position cohérente :
 
-Cache par chunk dans `<json-dir>/.correct-cache/<content-hash>/<model>/`.
+```
+<output-dir>/
+├── out/
+│   ├── <safe>.json              # input
+│   ├── <safe>.corrected.txt     # nouveau
+│   └── <safe>.diff              # nouveau
+└── cache/
+    └── <safe>/
+        └── correct/
+            └── <model>/
+                └── <content-hash>/
+                    ├── chunk-000-0001-0040.txt
+                    └── chunk-001-0041-0080.txt
+```
 
-## Quelles fichiers utiliser
+Le hash de contenu est dans le chemin du cache : si le transcript JSON
+change (re-transcription avec d'autres params), le cache `correct` n'est
+pas réutilisé (nouvel hash → nouveau sous-dossier).
+
+## Quels fichiers utiliser
+
+Tous dans `out/` :
 
 | Fichier | Usage |
 |---|---|
-| `.txt` | Lecture rapide |
-| `.srt` | Réécoute ciblée (timestamps précis sur l'audio) |
-| `.json` | Source canonique, à archiver / passer à d'autres outils |
-| `.corrected.txt` | Version corrigée par LLM, à comparer au `.txt` |
-| `.diff` | Liste exacte des changements proposés par le LLM |
-| `.vtt`, `.tsv` | Redondants pour usage courant |
+| `<safe>.txt` | Lecture rapide |
+| `<safe>.srt` | Réécoute ciblée (timestamps précis sur l'audio) |
+| `<safe>.json` | Source canonique, à archiver / passer à d'autres outils |
+| `<safe>.corrected.txt` | Version corrigée par LLM, à comparer au `.txt` |
+| `<safe>.diff` | Liste exacte des changements proposés par le LLM |
+| `<safe>.vtt`, `<safe>.tsv` | Redondants pour usage courant |
 
 ## Performance (M-series CPU, 1h d'audio)
 
@@ -142,9 +174,17 @@ Le `.gitignore` exclut automatiquement les outputs et caches : même un
 
 ## Reprendre un run interrompu
 
-Tous les caches sont keyed sur le contenu (audio fingerprint pour
-`transcribe`, hash du transcript pour `correct`). Relancer la même commande
-saute toutes les étapes déjà complétées.
+Tous les caches sont keyed sur le contenu :
+- `transcribe` : `cache/<safe>/meta.json` valide via fingerprint audio
+- `correct` : `cache/<safe>/correct/<model>/<content-hash>/` change dès que le
+  transcript change
+
+Relancer la même commande saute toutes les étapes déjà complétées.
 
 Pour forcer le re-traitement d'une étape, supprime le fichier de cache
-correspondant.
+correspondant :
+- Re-transcribe : `rm cache/<safe>/transcribe.json`
+- Re-aligne :    `rm cache/<safe>/align.json`
+- Re-diarise :   `rm cache/<safe>/diarize.json`
+- Re-correct :   `rm -rf cache/<safe>/correct/`
+- Tout repartir : `rm -rf cache/<safe>/`

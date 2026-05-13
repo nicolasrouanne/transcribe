@@ -1,3 +1,7 @@
+# Outputs and caches
+out/
+cache/
+
 # Audio (never commit recordings)
 *.m4a
 *.mp3
@@ -7,7 +11,7 @@
 *.flac
 *.mp4
 
-# Transcript outputs (sensitive content)
+# Transcript outputs (belt + braces if files end up outside out/)
 *.txt
 *.srt
 *.vtt
@@ -16,7 +20,7 @@
 *.diff
 *.corrected.txt
 
-# Stage caches (contain raw transcripts)
+# Legacy cache locations
 .transcribe-cache/
 .correct-cache/
 
@@ -28,6 +32,6 @@ __pycache__/
 # macOS
 .DS_Store
 
-# Allow this README & gitignore explicitly
+# Allow project files explicitly
 !README.md
 !.gitignore
