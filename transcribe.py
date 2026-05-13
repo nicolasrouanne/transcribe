@@ -154,7 +154,7 @@ def main() -> int:
             def do_diarize():
                 pipeline = DiarizationPipeline(
                     model_name=args.diarize_model,
-                    use_auth_token=token,
+                    token=token,
                     device=device,
                 )
                 segs = pipeline(
