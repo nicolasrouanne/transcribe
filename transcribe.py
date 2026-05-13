@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""Local WhisperX transcription with stage-level caching.
+"""Local transcription pipeline for Apple Silicon.
 
-Each stage (transcribe / align / diarise) is cached to disk so an interrupted
+Stages (transcribe / align / diarise) are cached to disk so an interrupted
 run can be resumed without redoing finished work. The HF token is read from
 ~/.config/whisperx/token and passed via the Python API (never via argv).
+
+Stack: ffmpeg loudnorm + mlx-whisper (Metal) + whisperx align (MPS) +
+pyannote diarisation (MPS).
 
 Layout under <output-dir>:
   out/<safe>.{txt,srt,vtt,json,tsv}
@@ -22,6 +25,7 @@ import time
 import unicodedata
 from pathlib import Path
 
+import mlx_whisper
 import numpy as np
 import pandas as pd
 import torch
@@ -33,11 +37,6 @@ MAX_BASENAME_LEN = 60
 
 
 def best_gpu_device() -> str:
-    """Best torch device for align/diarize on this machine.
-
-    ASR (faster-whisper / CTranslate2) stays on CPU because CTranslate2
-    does not yet support Metal/MPS on macOS.
-    """
     if torch.backends.mps.is_available():
         return "mps"
     if torch.cuda.is_available():
@@ -51,12 +50,10 @@ def load_audio_normalized(
     """Decode audio via ffmpeg with optional EBU R128 loudness normalisation.
 
     Returns float32 mono PCM at the target sample rate. With loudnorm enabled,
-    quiet passages are pulled up so whisper's no_speech / VAD thresholds see
-    speech instead of background noise.
+    quiet passages are pulled up so whisper's no_speech threshold sees speech
+    instead of background noise.
     """
-    audio_filter = (
-        "loudnorm=I=-16:TP=-1.5:LRA=11" if apply_loudnorm else "anull"
-    )
+    audio_filter = "loudnorm=I=-16:TP=-1.5:LRA=11" if apply_loudnorm else "anull"
     cmd = [
         "ffmpeg", "-nostdin", "-threads", "0",
         "-i", str(path),
@@ -77,8 +74,7 @@ def safe_dirname(name: str, max_len: int = MAX_BASENAME_LEN) -> str:
     """Sanitize a filename stem into a shell-safe, ASCII-only, truncated form."""
     nfkd = unicodedata.normalize("NFKD", name)
     ascii_only = "".join(c for c in nfkd if not unicodedata.combining(c))
-    lowered = ascii_only.lower()
-    safe = re.sub(r"[^a-z0-9]+", "-", lowered)
+    safe = re.sub(r"[^a-z0-9]+", "-", ascii_only.lower())
     safe = re.sub(r"-+", "-", safe).strip("-")
     if len(safe) > max_len:
         safe = safe[:max_len].rstrip("-")
@@ -121,7 +117,11 @@ def main() -> int:
     p.add_argument("audio", help="audio file path")
     p.add_argument("--lang", default="fr", help="language code or 'auto'")
     p.add_argument("--output-dir", default=".")
-    p.add_argument("--model", default="large-v3")
+    p.add_argument(
+        "--model",
+        default="mlx-community/whisper-large-v3-turbo",
+        help="HF repo for mlx-whisper (default: large-v3-turbo, distilled).",
+    )
     p.add_argument("--no-diarize", action="store_true")
     p.add_argument("--min-speakers", type=int, default=2)
     p.add_argument("--max-speakers", type=int, default=2)
@@ -140,13 +140,6 @@ def main() -> int:
         default=0.3,
         help="whisper threshold below which a segment is dropped as silence "
         "(default 0.3; whisper default is 0.6)",
-    )
-    p.add_argument(
-        "--vad-onset",
-        type=float,
-        default=0.3,
-        help="Silero VAD onset probability threshold (default 0.3; "
-        "whisperx default is 0.5)",
     )
     args = p.parse_args()
 
@@ -173,63 +166,43 @@ def main() -> int:
         "diarize_model": args.diarize_model if not args.no_diarize else None,
         "loudnorm": not args.no_loudnorm,
         "no_speech_threshold": args.no_speech_threshold,
-        "vad_onset": args.vad_onset,
     }
     if meta_path.exists():
         prev = json.loads(meta_path.read_text())
         prev_fp = prev.get("fingerprint")
-        # Treat missing fingerprint (legacy / migrated cache) as "unknown,
-        # trust it" — only abort on an explicit mismatch.
         if prev_fp is not None and prev_fp != fp:
-            print(
-                f"⚠ Cache fingerprint mismatch ({prev_fp} vs {fp}).",
-                file=sys.stderr,
-            )
-            print(
-                f"  The audio at this basename changed. Clear with: rm -rf {cache_dir}",
-                file=sys.stderr,
-            )
+            print(f"⚠ Cache fingerprint mismatch ({prev_fp} vs {fp}).", file=sys.stderr)
+            print(f"  Clear with: rm -rf {cache_dir}", file=sys.stderr)
             sys.exit(1)
     meta_path.write_text(json.dumps(new_meta, indent=2))
 
-    asr_device = "cpu"  # CTranslate2 has no Metal/MPS backend yet
     gpu_device = best_gpu_device()  # for alignment + diarisation
-    compute_type = "int8"
 
     print(f"Audio: {audio_path.name}", file=sys.stderr)
-    print(f"Safe: {safe_name}", file=sys.stderr)
+    print(f"Safe:  {safe_name}", file=sys.stderr)
     print(f"Out:   {out_dir}", file=sys.stderr)
     print(f"Cache: {cache_dir}", file=sys.stderr)
-    print(f"Devices: ASR={asr_device}, align/diarize={gpu_device}", file=sys.stderr)
+    print(f"Devices: ASR=mlx (Metal), align/diarize={gpu_device}", file=sys.stderr)
     print(
         f"Loading audio (loudnorm={'on' if not args.no_loudnorm else 'off'})...",
         file=sys.stderr,
     )
     audio = load_audio_normalized(audio_path, apply_loudnorm=not args.no_loudnorm)
 
-    # Stage 1: transcription
+    # Stage 1: transcription via mlx-whisper
     def do_transcribe():
         lang = None if args.lang == "auto" else args.lang
-        print("  loading model + VAD (silent ~1-2min)...", file=sys.stderr)
-        asr_options = {
-            "no_speech_threshold": args.no_speech_threshold,
-            "condition_on_previous_text": False,
-            "hallucination_silence_threshold": 2.0,
-        }
-        vad_options = {
-            "vad_onset": args.vad_onset,
-            "vad_offset": max(args.vad_onset - 0.15, 0.05),
-        }
-        model = whisperx.load_model(
-            args.model,
-            asr_device,
-            compute_type=compute_type,
-            language=lang,
-            vad_method="silero",
-            asr_options=asr_options,
-            vad_options=vad_options,
+        decode_options = {"language": lang} if lang else {}
+        print(f"  mlx-whisper ({args.model})...", file=sys.stderr)
+        res = mlx_whisper.transcribe(
+            audio,
+            path_or_hf_repo=args.model,
+            no_speech_threshold=args.no_speech_threshold,
+            condition_on_previous_text=False,
+            hallucination_silence_threshold=2.0,
+            verbose=False,
+            **decode_options,
         )
-        res = model.transcribe(audio, language=lang, print_progress=True)
         (cache_dir / "transcribe.json").write_text(json.dumps(res))
         return res
 
@@ -263,8 +236,7 @@ def main() -> int:
         lambda path: json.loads(path.read_text()),
         do_align,
     )
-    # whisperx.align drops the top-level language key; the writer needs it.
-    result["language"] = detected_lang
+    result["language"] = detected_lang  # whisperx.align drops it; writer needs it.
 
     # Stage 3: diarisation (optional)
     if not args.no_diarize:
