@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# correct — local LLM correction of a WhisperX transcript JSON.
+# Usage: correct <basename>.json [model]
+#   model defaults to mistral-nemo:12b.
+#
+# Requires Ollama:
+#   brew install ollama && ollama serve &
+#   ollama pull mistral-nemo:12b
+#
+# Per-chunk responses are cached, so re-running resumes where it left off.
+
+set -euo pipefail
+
+[ $# -lt 1 ] && {
+  echo "Usage: $(basename "$0") <json-file> [model]" >&2
+  exit 1
+}
+
+script_dir="$(cd "$(dirname "$0")" && pwd)"
+whisperx_python="$(uv tool dir 2>/dev/null)/whisperx/bin/python"
+
+[ -x "$whisperx_python" ] || {
+  echo "WhisperX python not found at $whisperx_python" >&2
+  echo "Install with: uv tool install whisperx" >&2
+  exit 1
+}
+
+input="$1"
+model="${2:-mistral-nemo:12b}"
+
+exec "$whisperx_python" "$script_dir/correct.py" --model "$model" "$input"
