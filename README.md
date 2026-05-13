@@ -5,13 +5,14 @@ Aucun appel cloud pendant l'usage. Les modèles sont téléchargés une fois dep
 Hugging Face / Ollama, puis l'inférence est entièrement offline.
 
 Stack :
+- **ffmpeg + EBU R128 loudnorm** — pré-traitement audio (normalisation -16 LUFS)
 - **WhisperX** (`large-v3`) — transcription + alignement word-level + VAD Silero
 - **pyannote/speaker-diarization-community-1** — diarisation (qui dit quoi)
-- **Ollama + mistral-nemo:12b** — correction LLM des erreurs de speech-to-text
+- **Ollama + mistral-nemo:12b** — correction LLM contextuelle
 
-Deux scripts :
-- `./transcribe <audio>` — audio → transcript multi-format (`.txt`, `.srt`, `.vtt`, `.json`, `.tsv`)
-- `./correct <transcript.json>` — transcript → version corrigée par un LLM local
+Deux scripts (installés dans `~/.local/bin/`, donc appelables depuis n'importe où) :
+- `transcribe <audio>` — audio → transcript multi-format (`.txt`, `.srt`, `.vtt`, `.json`, `.tsv`)
+- `correct <transcript.json>` — transcript → version corrigée par un LLM local
 
 Chaque étape est mise en cache. Si un run plante (ou si tu fais Ctrl-C), relance
 la même commande : seules les étapes manquantes seront refaites.
@@ -64,7 +65,7 @@ Modèles alternatifs selon ta RAM :
 ### Transcription
 
 ```sh
-./transcribe <audio-file> [lang] [output-dir]
+transcribe <audio-file> [lang] [output-dir]
 ```
 
 - `lang` : code langue (`fr` par défaut, `auto` pour détection automatique)
@@ -72,9 +73,18 @@ Modèles alternatifs selon ta RAM :
 
 Exemples :
 ```sh
-./transcribe ~/Downloads/seance.m4a
-./transcribe ~/Downloads/talk.mp3 en
-./transcribe ~/Downloads/seance.m4a fr ~/transcripts/
+transcribe ~/Downloads/seance.m4a
+transcribe ~/Downloads/talk.mp3 en
+transcribe ~/Downloads/seance.m4a fr ~/transcripts/
+```
+
+Flags avancés (pour le `transcribe.py` directement) :
+
+```sh
+transcribe.py audio.m4a \
+  --no-loudnorm \                # désactive la normalisation EBU R128 (rare)
+  --no-speech-threshold 0.5 \    # défaut 0.3 ; whisper default 0.6 — voir Tuning
+  --vad-onset 0.4                # défaut 0.3 ; whisperx default 0.5
 ```
 
 Le basename de l'audio est **sanitisé** (ASCII, minuscules, tirets) et tronqué
@@ -106,14 +116,19 @@ détecté et le script abort. Pour repartir de zéro : `rm -rf cache/<safe>/`.
 ### Correction LLM
 
 ```sh
-./correct <transcript.json> [model]
+correct <transcript.json> [model]
 ```
 
 Exemples :
 ```sh
-./correct ~/Downloads/seance.json
-./correct ~/Downloads/seance.json qwen2.5:14b
+correct ~/Downloads/seance.json
+correct ~/Downloads/seance.json qwen2.5:14b
 ```
+
+Le prompt (v3) autorise la correction contextuelle : le LLM utilise les lignes
+voisines pour fixer les mots phonétiquement proches qui collent au sujet et
+reconstruire les phrases nonsense. Il ne paraphrase pas les phrases claires et
+conserve les hésitations orales.
 
 Si le JSON est dans `out/`, les outputs sont écrits à côté et le cache à la
 position cohérente :
@@ -128,9 +143,10 @@ position cohérente :
     └── <safe>/
         └── correct/
             └── <model>/
-                └── <content-hash>/
-                    ├── chunk-000-0001-0040.txt
-                    └── chunk-001-0041-0080.txt
+                └── <prompt-version>/      # v1, v2, v3... change quand le prompt bouge
+                    └── <content-hash>/
+                        ├── chunk-000-0001-0040.txt
+                        └── chunk-001-0041-0080.txt
 ```
 
 Le hash de contenu est dans le chemin du cache : si le transcript JSON
@@ -161,6 +177,47 @@ Tous dans `out/` :
 
 Pas de GPU exploité actuellement (CTranslate2 ne supporte pas Metal). La
 diarisation pyannote peut tourner sur MPS mais n'est pas activée dans ce script.
+
+## Tuning : récupérer les passages manquants
+
+Whisper drop les passages trop bas. Sur un audio à `mean_volume` -35 dB, on
+peut perdre 20-30 % du contenu sans le savoir.
+
+Le script applique par défaut trois mitigations :
+
+| Réglage | Valeur ici | Whisper default | Effet |
+|---|---|---|---|
+| `loudnorm` (ffmpeg) | activé (-16 LUFS) | non appliqué | Pull-up des passages calmes avant transcription |
+| `no_speech_threshold` | 0.3 | 0.6 | Whisper drop moins de segments incertains |
+| `vad_onset` (Silero) | 0.3 | 0.5 | VAD catch les voix plus calmes |
+| `hallucination_silence_threshold` | 2.0 | None | Coupe les boucles répétées d'hallucination |
+
+Si tu vois encore des trous, baisse encore avec `--vad-onset 0.2` ou
+`--no-speech-threshold 0.2`. Trop bas → whisper se met à transcrire du
+bruit de fond, donc test progressivement.
+
+### Diagnostic des trous
+
+Pour voir où le transcript saute des moments d'audio :
+
+```python
+# pip install via uv tool; ou écrire un script
+import json, statistics
+from pathlib import Path
+
+j = json.loads(Path("out/<safe>.json").read_text())
+segs = j["segments"]
+print(f"Segments: {len(segs)}, last end: {segs[-1]['end']:.0f}s")
+gaps = sorted(
+    [(i, segs[i]['end'], segs[i+1]['start'], segs[i+1]['start']-segs[i]['end'])
+     for i in range(len(segs)-1)],
+    key=lambda x: -x[3],
+)
+for i, e, s, g in [g for g in gaps if g[3] > 30][:10]:
+    print(f"  seg {i}: {e:7.1f} → {s:7.1f}  (gap {g:6.1f}s)")
+```
+
+Si la somme des gaps > 30s dépasse 10 % de la durée totale, tune les seuils.
 
 ## Privacy
 
