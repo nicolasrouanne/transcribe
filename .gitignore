@@ -1,0 +1,33 @@
+# Audio (never commit recordings)
+*.m4a
+*.mp3
+*.wav
+*.opus
+*.ogg
+*.flac
+*.mp4
+
+# Transcript outputs (sensitive content)
+*.txt
+*.srt
+*.vtt
+*.tsv
+*.json
+*.diff
+*.corrected.txt
+
+# Stage caches (contain raw transcripts)
+.transcribe-cache/
+.correct-cache/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# macOS
+.DS_Store
+
+# Allow this README & gitignore explicitly
+!README.md
+!.gitignore
