@@ -96,12 +96,16 @@ def main() -> int:
 
     # Stage 1: transcription
     def do_transcribe():
-        model = whisperx.load_model(args.model, device, compute_type=compute_type)
-        result = model.transcribe(
-            audio,
-            language=None if args.lang == "auto" else args.lang,
-            print_progress=True,
+        lang = None if args.lang == "auto" else args.lang
+        print("  loading model + VAD (silent ~1-2min)...", file=sys.stderr)
+        model = whisperx.load_model(
+            args.model,
+            device,
+            compute_type=compute_type,
+            language=lang,
+            vad_method="silero",
         )
+        result = model.transcribe(audio, language=lang, print_progress=True)
         (cache_dir / "transcribe.json").write_text(json.dumps(result))
         return result
 
