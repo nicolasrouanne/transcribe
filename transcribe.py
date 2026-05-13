@@ -24,11 +24,25 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import torch
 import whisperx
 from whisperx.diarize import DiarizationPipeline, assign_word_speakers
 from whisperx.utils import get_writer
 
 MAX_BASENAME_LEN = 60
+
+
+def best_gpu_device() -> str:
+    """Best torch device for align/diarize on this machine.
+
+    ASR (faster-whisper / CTranslate2) stays on CPU because CTranslate2
+    does not yet support Metal/MPS on macOS.
+    """
+    if torch.backends.mps.is_available():
+        return "mps"
+    if torch.cuda.is_available():
+        return "cuda"
+    return "cpu"
 
 
 def load_audio_normalized(
@@ -178,13 +192,15 @@ def main() -> int:
             sys.exit(1)
     meta_path.write_text(json.dumps(new_meta, indent=2))
 
-    device = "cpu"
+    asr_device = "cpu"  # CTranslate2 has no Metal/MPS backend yet
+    gpu_device = best_gpu_device()  # for alignment + diarisation
     compute_type = "int8"
 
     print(f"Audio: {audio_path.name}", file=sys.stderr)
     print(f"Safe: {safe_name}", file=sys.stderr)
     print(f"Out:   {out_dir}", file=sys.stderr)
     print(f"Cache: {cache_dir}", file=sys.stderr)
+    print(f"Devices: ASR={asr_device}, align/diarize={gpu_device}", file=sys.stderr)
     print(
         f"Loading audio (loudnorm={'on' if not args.no_loudnorm else 'off'})...",
         file=sys.stderr,
@@ -206,7 +222,7 @@ def main() -> int:
         }
         model = whisperx.load_model(
             args.model,
-            device,
+            asr_device,
             compute_type=compute_type,
             language=lang,
             vad_method="silero",
@@ -228,14 +244,14 @@ def main() -> int:
     # Stage 2: alignment
     def do_align():
         align_model, metadata = whisperx.load_align_model(
-            language_code=detected_lang, device=device
+            language_code=detected_lang, device=gpu_device
         )
         aligned = whisperx.align(
             result["segments"],
             align_model,
             metadata,
             audio,
-            device,
+            gpu_device,
             return_char_alignments=False,
         )
         (cache_dir / "align.json").write_text(json.dumps(aligned))
@@ -264,7 +280,7 @@ def main() -> int:
                 pipeline = DiarizationPipeline(
                     model_name=args.diarize_model,
                     token=token,
-                    device=device,
+                    device=gpu_device,
                 )
                 segs = pipeline(
                     audio,
