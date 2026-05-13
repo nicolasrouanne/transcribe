@@ -140,6 +140,8 @@ def main() -> int:
         lambda p: json.loads(p.read_text()),
         do_align,
     )
+    # whisperx.align drops the top-level language key; the writer needs it.
+    result["language"] = detected_lang
 
     # Stage 3: diarisation (optional)
     if not args.no_diarize:
