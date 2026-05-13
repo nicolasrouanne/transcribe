@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pandas as pd
 import whisperx
+from whisperx.diarize import DiarizationPipeline, assign_word_speakers
 from whisperx.utils import get_writer
 
 
@@ -151,7 +152,7 @@ def main() -> int:
         else:
 
             def do_diarize():
-                pipeline = whisperx.DiarizationPipeline(
+                pipeline = DiarizationPipeline(
                     model_name=args.diarize_model,
                     use_auth_token=token,
                     device=device,
@@ -170,7 +171,7 @@ def main() -> int:
                 lambda p: pd.read_json(p, orient="records"),
                 do_diarize,
             )
-            result = whisperx.assign_word_speakers(diarize_segs, result)
+            result = assign_word_speakers(diarize_segs, result)
 
     # Stage 4: write outputs
     print("→ writing outputs...", file=sys.stderr)
