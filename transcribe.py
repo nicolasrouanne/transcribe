@@ -16,17 +16,47 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 import unicodedata
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import whisperx
 from whisperx.diarize import DiarizationPipeline, assign_word_speakers
 from whisperx.utils import get_writer
 
 MAX_BASENAME_LEN = 60
+
+
+def load_audio_normalized(
+    path: Path, sr: int = 16000, apply_loudnorm: bool = True
+) -> np.ndarray:
+    """Decode audio via ffmpeg with optional EBU R128 loudness normalisation.
+
+    Returns float32 mono PCM at the target sample rate. With loudnorm enabled,
+    quiet passages are pulled up so whisper's no_speech / VAD thresholds see
+    speech instead of background noise.
+    """
+    audio_filter = (
+        "loudnorm=I=-16:TP=-1.5:LRA=11" if apply_loudnorm else "anull"
+    )
+    cmd = [
+        "ffmpeg", "-nostdin", "-threads", "0",
+        "-i", str(path),
+        "-af", audio_filter,
+        "-f", "s16le", "-ac", "1", "-acodec", "pcm_s16le", "-ar", str(sr),
+        "-",
+    ]
+    proc = subprocess.run(cmd, capture_output=True)
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"ffmpeg failed (code {proc.returncode}): "
+            f"{proc.stderr.decode(errors='replace')[:500]}"
+        )
+    return np.frombuffer(proc.stdout, np.int16).astype(np.float32) / 32768.0
 
 
 def safe_dirname(name: str, max_len: int = MAX_BASENAME_LEN) -> str:
@@ -85,6 +115,25 @@ def main() -> int:
         "--diarize-model",
         default="pyannote/speaker-diarization-community-1",
     )
+    p.add_argument(
+        "--no-loudnorm",
+        action="store_true",
+        help="skip EBU R128 loudness normalisation (default: enabled)",
+    )
+    p.add_argument(
+        "--no-speech-threshold",
+        type=float,
+        default=0.3,
+        help="whisper threshold below which a segment is dropped as silence "
+        "(default 0.3; whisper default is 0.6)",
+    )
+    p.add_argument(
+        "--vad-onset",
+        type=float,
+        default=0.3,
+        help="Silero VAD onset probability threshold (default 0.3; "
+        "whisperx default is 0.5)",
+    )
     args = p.parse_args()
 
     audio_path = Path(args.audio).expanduser().resolve()
@@ -108,6 +157,9 @@ def main() -> int:
         "model": args.model,
         "lang": args.lang,
         "diarize_model": args.diarize_model if not args.no_diarize else None,
+        "loudnorm": not args.no_loudnorm,
+        "no_speech_threshold": args.no_speech_threshold,
+        "vad_onset": args.vad_onset,
     }
     if meta_path.exists():
         prev = json.loads(meta_path.read_text())
@@ -133,18 +185,33 @@ def main() -> int:
     print(f"Safe: {safe_name}", file=sys.stderr)
     print(f"Out:   {out_dir}", file=sys.stderr)
     print(f"Cache: {cache_dir}", file=sys.stderr)
-    audio = whisperx.load_audio(str(audio_path))
+    print(
+        f"Loading audio (loudnorm={'on' if not args.no_loudnorm else 'off'})...",
+        file=sys.stderr,
+    )
+    audio = load_audio_normalized(audio_path, apply_loudnorm=not args.no_loudnorm)
 
     # Stage 1: transcription
     def do_transcribe():
         lang = None if args.lang == "auto" else args.lang
         print("  loading model + VAD (silent ~1-2min)...", file=sys.stderr)
+        asr_options = {
+            "no_speech_threshold": args.no_speech_threshold,
+            "condition_on_previous_text": False,
+            "hallucination_silence_threshold": 2.0,
+        }
+        vad_options = {
+            "vad_onset": args.vad_onset,
+            "vad_offset": max(args.vad_onset - 0.15, 0.05),
+        }
         model = whisperx.load_model(
             args.model,
             device,
             compute_type=compute_type,
             language=lang,
             vad_method="silero",
+            asr_options=asr_options,
+            vad_options=vad_options,
         )
         res = model.transcribe(audio, language=lang, print_progress=True)
         (cache_dir / "transcribe.json").write_text(json.dumps(res))
