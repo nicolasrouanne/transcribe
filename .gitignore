@@ -35,3 +35,8 @@ __pycache__/
 # Allow project files explicitly
 !README.md
 !.gitignore
+
+# Test fixtures: short, non-sensitive audio + hand-corrected reference
+!tests/fixtures/**/audio.*
+!tests/fixtures/**/reference.json
+!tests/baselines.json

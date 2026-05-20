@@ -1,0 +1,29 @@
+{
+  "language": "fr",
+  "segments": [
+    {
+      "start": 0.899,
+      "end": 4.179,
+      "speaker": "SPEAKER_00",
+      "text": "Ici, par exemple, on enregistre la discussion, tu vois, et que toi, tu parles un petit peu."
+    },
+    {
+      "start": 4.219,
+      "end": 7.539,
+      "speaker": "SPEAKER_01",
+      "text": "Et moi, je parle et j'ai envie d'être transcrit et parler, par l'IA."
+    },
+    {
+      "start": 8.159,
+      "end": 11.259,
+      "speaker": "SPEAKER_00",
+      "text": "Ben normalement, peut-être que ça va marcher et reconnaître qui parle."
+    },
+    {
+      "start": 11.659,
+      "end": 12.020,
+      "speaker": "SPEAKER_01",
+      "text": "C'est ça le but."
+    }
+  ]
+}

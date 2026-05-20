@@ -1,0 +1,91 @@
+"""End-to-end regression test against annotated fixtures.
+
+Runs the full pipeline on each fixture audio, then compares the output
+against a hand-corrected reference.json (same schema as the pipeline
+output, just cleaned up).
+
+Adding a fixture:
+  1. cp <audio> tests/fixtures/<name>/audio.<ext>
+  2. ./transcribe tests/fixtures/<name>/audio.<ext> fr tests/fixtures/<name>/
+  3. edit out/<safe>.json, fix speakers + text
+  4. mv out/<safe>.json tests/fixtures/<name>/reference.json
+  5. rm -rf tests/fixtures/<name>/{out,cache}
+  6. run pytest, copy the printed metrics into baselines.json
+"""
+from __future__ import annotations
+
+import json
+import subprocess
+from pathlib import Path
+
+import pytest
+from jiwer import wer
+from pyannote.core import Annotation, Segment
+from pyannote.metrics.diarization import DiarizationErrorRate
+
+REPO = Path(__file__).resolve().parent.parent
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
+BASELINES_PATH = Path(__file__).resolve().parent / "baselines.json"
+
+REGRESSION_TOLERANCE = 0.05
+
+
+def _to_annotation(segments: list[dict]) -> Annotation:
+    annotation = Annotation()
+    for seg in segments:
+        annotation[Segment(seg["start"], seg["end"])] = seg["speaker"]
+    return annotation
+
+
+def _concat_text(segments: list[dict]) -> str:
+    return " ".join(seg["text"].strip() for seg in segments)
+
+
+@pytest.fixture(scope="session")
+def baselines() -> dict:
+    return json.loads(BASELINES_PATH.read_text()) if BASELINES_PATH.exists() else {}
+
+
+def _fixture_dirs() -> list[Path]:
+    return sorted(d for d in FIXTURES.iterdir() if d.is_dir())
+
+
+@pytest.mark.parametrize(
+    "fixture_dir", _fixture_dirs(), ids=lambda d: d.name
+)
+def test_pipeline(fixture_dir: Path, tmp_path: Path, baselines: dict) -> None:
+    audio_path = next(fixture_dir.glob("audio.*"))
+    reference = json.loads((fixture_dir / "reference.json").read_text())
+
+    subprocess.run(
+        [str(REPO / "transcribe"), str(audio_path), "fr", str(tmp_path)],
+        check=True,
+    )
+
+    out_json = next((tmp_path / "out").glob("*.json"))
+    hypothesis = json.loads(out_json.read_text())
+
+    ref_text = _concat_text(reference["segments"])
+    hyp_text = _concat_text(hypothesis["segments"])
+    wer_score = wer(ref_text, hyp_text)
+
+    der = DiarizationErrorRate()(
+        _to_annotation(reference["segments"]),
+        _to_annotation(hypothesis["segments"]),
+    )
+
+    print(f"\n[{fixture_dir.name}] WER={wer_score:.3f}  DER={der:.3f}")
+
+    baseline = baselines.get(fixture_dir.name)
+    if baseline is None:
+        pytest.skip(
+            f"No baseline for {fixture_dir.name}. "
+            f'Add {{"wer": {wer_score:.3f}, "der": {der:.3f}}} to tests/baselines.json.'
+        )
+
+    assert wer_score <= baseline["wer"] + REGRESSION_TOLERANCE, (
+        f"WER regressed: {wer_score:.3f} > {baseline['wer']:.3f} + {REGRESSION_TOLERANCE}"
+    )
+    assert der <= baseline["der"] + REGRESSION_TOLERANCE, (
+        f"DER regressed: {der:.3f} > {baseline['der']:.3f} + {REGRESSION_TOLERANCE}"
+    )
