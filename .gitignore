@@ -39,4 +39,4 @@ __pycache__/
 # Test fixtures: short, non-sensitive audio + hand-corrected reference
 !tests/fixtures/**/audio.*
 !tests/fixtures/**/reference.json
-!tests/baselines.json
+!tests/fixtures/**/baseline.json
