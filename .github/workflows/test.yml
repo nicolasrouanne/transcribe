@@ -26,9 +26,6 @@ jobs:
       - run: uv sync
       - run: uv tool install whisperx
 
-      - name: Configure HF token
-        run: |
-          mkdir -p ~/.config/whisperx
-          echo "${{ secrets.HF_TOKEN }}" > ~/.config/whisperx/token
-
       - run: uv run pytest
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
