@@ -1,26 +1,6 @@
-# Outputs and caches
+# Pipeline outputs and caches
 out/
 cache/
-
-# Audio (never commit recordings)
-*.m4a
-*.mp3
-*.wav
-*.opus
-*.ogg
-*.flac
-*.mp4
-
-# Transcript outputs (belt + braces if files end up outside out/)
-*.txt
-*.srt
-*.vtt
-*.tsv
-*.json
-*.diff
-*.corrected.txt
-
-# Legacy cache locations
 .transcribe-cache/
 .correct-cache/
 
@@ -28,10 +8,10 @@ cache/
 __pycache__/
 *.pyc
 .venv/
+.pytest_cache/
 
 # macOS
 .DS_Store
 
-# Allow project files explicitly
-!README.md
-!.gitignore
+# Claude Code session state
+.claude/

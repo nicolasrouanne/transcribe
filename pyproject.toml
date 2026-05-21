@@ -1,0 +1,14 @@
+[project]
+name = "transcribe"
+version = "0.1.0"
+description = "Local STT pipeline with end-to-end regression tests"
+requires-python = ">=3.10"
+dependencies = [
+    "pytest>=8.0",
+    "jiwer>=3.0",
+    "pyannote.metrics>=3.2",
+]
+
+[tool.pytest.ini_options]
+addopts = "-v -s"
+testpaths = ["tests"]
