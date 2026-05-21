@@ -15,11 +15,17 @@ Adding a fixture:
   2. ./transcribe tests/fixtures/<name>/audio.<ext> fr tests/fixtures/<name>/
   3. edit out/<safe>.json, fix speakers + text, save as reference.json
   4. rm -rf tests/fixtures/<name>/{out,cache}
-  5. run pytest, copy printed metrics into baseline.json
+  5. UPDATE_BASELINE=1 uv run pytest   # writes baseline.json with measured values
+  6. git diff to sanity-check, commit
+
+Updating a baseline after a validated tuning improvement:
+  UPDATE_BASELINE=1 uv run pytest      # overwrites baseline.json
+  git diff                              # confirm the new values, commit
 """
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -76,10 +82,15 @@ def test_pipeline(fixture_dir: Path, tmp_path: Path) -> None:
     print(f"\n[{fixture_dir.name}] WER={wer_score:.3f}  DER={der:.3f}")
 
     baseline_path = fixture_dir / "baseline.json"
+    if os.environ.get("UPDATE_BASELINE") == "1":
+        baseline_path.write_text(
+            json.dumps({"wer": wer_score, "der": der}, indent=2) + "\n"
+        )
+        pytest.skip(f"Updated {baseline_path.relative_to(REPO)}")
     if not baseline_path.exists():
         pytest.skip(
             f"No baseline for {fixture_dir.name}. "
-            f'Write {{"wer": {wer_score:.3f}, "der": {der:.3f}}} to {baseline_path.relative_to(REPO)}.'
+            f"Re-run with UPDATE_BASELINE=1 to write {baseline_path.relative_to(REPO)}."
         )
     baseline = json.loads(baseline_path.read_text())
 
