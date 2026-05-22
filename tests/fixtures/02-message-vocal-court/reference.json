@@ -1,0 +1,35 @@
+{
+  "language": "fr",
+  "segments": [
+    {
+      "start": 0.93,
+      "end": 9.19,
+      "speaker": "SPEAKER_00",
+      "text": "Coucou ! C'était pour faire un petit update de la matinée, donc pas de fracture."
+    },
+    {
+      "start": 9.21,
+      "end": 20.26,
+      "speaker": "SPEAKER_00",
+      "text": "Là, on retourne quand même chez le médecin au centre médical pour savoir si c'est une entorse, s'il faut faire quelque chose de particulier, puisque je ne sais pas trop."
+    },
+    {
+      "start": 20.32,
+      "end": 24.86,
+      "speaker": "SPEAKER_00",
+      "text": "Et vu que le médecin des radios, on ne le croise même pas."
+    },
+    {
+      "start": 24.88,
+      "end": 29.32,
+      "speaker": "SPEAKER_00",
+      "text": "Comme ça, on rend l'attelle et si jamais il est mieux avec des bandes, on mettra des bandes plutôt."
+    },
+    {
+      "start": 30.44,
+      "end": 31.49,
+      "speaker": "SPEAKER_00",
+      "text": "Voilà, bisous !"
+    }
+  ]
+}
