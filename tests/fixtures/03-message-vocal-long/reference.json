@@ -1,0 +1,89 @@
+{
+  "language": "fr",
+  "segments": [
+    {
+      "start": 0.642,
+      "end": 2.984,
+      "speaker": "SPEAKER_00",
+      "text": "Coucou, c'est moi."
+    },
+    {
+      "start": 3.024,
+      "end": 15.553,
+      "speaker": "SPEAKER_00",
+      "text": "Je viens de voir que la semaine prochaine, il y avait une compétition longinesse à Ramatuelle, donc une compétition de sauts d'obstacles."
+    },
+    {
+      "start": 15.593,
+      "end": 19.415,
+      "speaker": "SPEAKER_00",
+      "text": "Les tarifs le matin, ce n'est pas si cher pour les sessions du matin."
+    },
+    {
+      "start": 19.435,
+      "end": 22.477,
+      "speaker": "SPEAKER_00",
+      "text": "C'est 20 euros pour les adultes et 10 euros pour les enfants."
+    },
+    {
+      "start": 22.518,
+      "end": 25.44,
+      "speaker": "SPEAKER_00",
+      "text": "Donc, j'aurais bien amené Jules."
+    },
+    {
+      "start": 25.46,
+      "end": 26.921,
+      "speaker": "SPEAKER_00",
+      "text": "Je trouve que c'était chouette."
+    },
+    {
+      "start": 26.981,
+      "end": 28.482,
+      "speaker": "SPEAKER_00",
+      "text": "Et quitte à dormir"
+    },
+    {
+      "start": 29.534,
+      "end": 33.7,
+      "speaker": "SPEAKER_00",
+      "text": "le vendredi soir, pas très loin. En plus, c'est un coin joli."
+    },
+    {
+      "start": 33.74,
+      "end": 44.433,
+      "speaker": "SPEAKER_00",
+      "text": "Je ne sais pas si on y va tous ou si on ne fait qu'un parent et un enfant, parce que c'est sympa aussi parfois"
+    },
+    {
+      "start": 45.474,
+      "end": 50.377,
+      "speaker": "SPEAKER_00",
+      "text": "de juste faire un truc tout seul sans avoir les autres."
+    },
+    {
+      "start": 51.038,
+      "end": 54.18,
+      "speaker": "SPEAKER_00",
+      "text": "Voilà, dis-moi ce que t'en penses."
+    },
+    {
+      "start": 54.2,
+      "end": 58.022,
+      "speaker": "SPEAKER_00",
+      "text": "Je regarderai s'il y a un petit logement pour le vendredi soir."
+    },
+    {
+      "start": 58.042,
+      "end": 62.865,
+      "speaker": "SPEAKER_00",
+      "text": "Je pense que ça lui ferait plaisir en plus de faire un petit week-end comme ça."
+    },
+    {
+      "start": 62.925,
+      "end": 63.746,
+      "speaker": "SPEAKER_00",
+      "text": "Et bah bisous !"
+    }
+  ]
+}
