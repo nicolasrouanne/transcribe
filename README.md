@@ -74,9 +74,9 @@ transcribe <audio-file> [lang] [output-dir]
 
 Examples:
 ```sh
-transcribe ~/Downloads/seance.m4a
+transcribe ~/Downloads/meeting.m4a
 transcribe ~/Downloads/talk.mp3 en
-transcribe ~/Downloads/seance.m4a fr ~/transcripts/
+transcribe ~/Downloads/meeting.m4a fr ~/transcripts/
 ```
 
 Advanced flags (passed directly to `transcribe.py`):
@@ -89,8 +89,8 @@ transcribe.py audio.m4a \
 ```
 
 The audio basename is **sanitised** (ASCII, lowercase, dashes) and truncated
-to 60 characters. For example `Psychologue - Corps et pas de côté .m4a` →
-`psychologue-corps-et-pas-de-cote`.
+to 60 characters. For example `Réunion d'équipe - Roadmap Q3 .m4a` →
+`reunion-d-equipe-roadmap-q3`.
 
 Layout created under `output-dir`:
 
@@ -122,8 +122,8 @@ correct <transcript.json> [model]
 
 Examples:
 ```sh
-correct ~/Downloads/seance.json
-correct ~/Downloads/seance.json qwen2.5:14b
+correct ~/Downloads/meeting.json
+correct ~/Downloads/meeting.json qwen2.5:14b
 ```
 
 The prompt (v3) allows contextual correction: the LLM uses neighbouring lines
